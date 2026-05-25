@@ -160,7 +160,72 @@ irradiance(compartment, t) =
 
 ### Phase 4: 空間応答マップを作る
 
-細胞中心を基準に、照射点をずらして応答を測る。
+細胞中心を基準に、照射面積、照射位置、分散パターンを変えて応答を測る。この phase は一度に広くやらず、計算負荷が軽い順に分ける。
+
+#### Phase 4A: 中心刺激で面積閾値を測る
+
+まず刺激中心を soma 直上に固定し、照射面積だけを変える。四角刺激と円刺激の両方で、発火に必要な最小サイズを求める。
+
+この段階の目的は、以後の空間 sweep で「そもそも発火し得るサイズ」を決めることである。狭すぎる刺激を位置 sweep しても failure ばかりになり、latency や場所依存性が評価できない。
+
+掃引軸。
+
+- square side length
+- circle diameter
+- surface irradiance
+- pulse duration
+- ChR2 expression scale
+- baseline membrane potential
+
+出力。
+
+- firing threshold size
+- peak ChR2 current
+- integrated ChR2 charge
+- first spike latency
+- subthreshold depolarization
+
+#### Phase 4B: 中心刺激と端刺激の latency 差を測る
+
+面積閾値より少し大きい刺激サイズを使い、刺激中心を x-z 平面上でずらす。最初は 1D の line scan、次に 2D grid scan に進む。
+
+最初に見るべき比較は以下。
+
+- soma 直上
+- apical tuft 側に寄った位置
+- basal dendrite 側に寄った位置
+- cell footprint の端
+
+出力。
+
+- first spike latency map
+- spike probability map
+- peak depolarization map
+- total ChR2 current map
+- apical/basal/soma 別の受光量と電流
+
+#### Phase 4C: 分散刺激を試す
+
+次に、同じ総面積または同じ総光量で、連続した 1 つの領域を照射する場合と、複数点に分散して照射する場合を比較する。
+
+候補。
+
+- contiguous square
+- contiguous circle
+- separated dots
+- apical dendrite に沿う sparse pattern
+- soma 周囲を避ける ring-like pattern
+- random sparse pattern
+
+評価軸。
+
+- 同じ総光量でどちらが発火しやすいか
+- latency が短いか
+- burst しやすいか
+- soma 電位波形が自然発火に近いか
+- apical-dominant / basal-dominant / soma-dominant のどれになるか
+
+分散刺激は、DMD/patterned stimulation の本質に近い。ただし組み合わせ数が多いため、最初は数個の手設計パターンで十分である。
 
 掃引軸。
 
@@ -182,7 +247,7 @@ irradiance(compartment, t) =
 
 この結果から、単一細胞の光受容野を作る。
 
-### Phase 5: 時間応答と PWM 応答を調べる
+### Phase 5: 時間応答、PWM、長時間弱刺激を調べる
 
 照射位置を固定し、時間パターンを掃引する。
 
@@ -195,6 +260,9 @@ irradiance(compartment, t) =
 - sequence duration
 - inter-stimulus interval
 - total light dose
+- low irradiance long pulse
+- slowly varying envelope
+- repeated subthreshold stimulation
 
 解析項目。
 
@@ -205,8 +273,56 @@ irradiance(compartment, t) =
 - Na channel inactivation の蓄積
 - ChR2 desensitization の蓄積
 - 同じ総光量で continuous と PWM がどう違うか
+- 低強度長時間刺激で membrane potential がどこまで持ち上がるか
+- baseline が高い状態で subthreshold 光入力が spike timing をどれだけ早めるか
 
-### Phase 6: 実験データに合わせてパラメータを推定する
+長時間弱刺激は in vivo に近い初期状態を考える上で重要である。静止膜電位から発火させる条件だけを見ると必要光量を過大評価する可能性があるため、まず単一細胞で baseline membrane potential をずらした条件を入れる。
+
+### Phase 6: 初期状態を振る
+
+同じ光刺激でも、細胞の初期状態により応答が変わる。まずは microcircuit を入れず、単一細胞の状態変数だけを振る。
+
+軽い順に以下を試す。
+
+1. 初期膜電位を変える。
+2. holding current を入れて baseline を変える。
+3. Na/K/HCN gating variables の初期条件を変える。
+4. Poisson-like の excitatory/inhibitory conductance noise を入れる。
+5. 背景 synaptic bombardment を conductance clamp として入れる。
+
+出力。
+
+- 初期膜電位ごとの発火閾値
+- 初期膜電位ごとの latency
+- 同じ刺激に対する failure/spike/burst の割合
+- 光刺激による spike timing advance
+- subthreshold 光入力が背景揺らぎをどれだけ spike へ変換するか
+
+この phase でまず「in vivo ではもっと baseline が高いので必要光量が下がる」という仮説を定量化する。
+
+### Phase 7: 局所 microcircuit を再現する
+
+単一細胞の初期状態 sweep だけで不十分な場合、周囲の少数細胞を入れて局所 microcircuit を作る。
+
+最初から Dura-Bernal full network を使わず、最小局所回路から始める。
+
+候補。
+
+- 1 PT5B + 数個の excitatory reduced cells
+- 1 PT5B + PV/SOM simple inhibitory cells
+- 1 PT5B + conductance-based background input
+- small population of PT5B/IT5B/PV/SOM with Dura-Bernal connectivity statistics
+
+目的。
+
+- 初期状態のばらつきを自然に作る
+- recurrent excitation による spike threshold 低下を見る
+- inhibition による latency jitter と failure を見る
+- 光刺激が直接発火させるのか、microcircuit を少し押して発火確率を変えるのかを分ける
+
+計算負荷が高くなるため、microcircuit は Phase 4-6 の単一細胞 surrogate ができてから導入する。
+
+### Phase 8: 実験データに合わせてパラメータを推定する
 
 in vivo patch clamp または先行実験から得られるデータに合わせ、ChR2 発現量・光伝播・kinetics を調整する。
 
@@ -224,13 +340,15 @@ in vivo patch clamp または先行実験から得られるデータに合わせ
 
 - ChR2 maximal conductance density
 - expression distribution
-- optical spread
-- depth attenuation
+- optical spread, only if ChR2 expression alone cannot fit data
+- depth attenuation, only if ChR2 expression alone cannot fit data
 - ChR2 activation/deactivation/desensitization
+
+現在の方針では、光学パラメータは Yona et al., 2016 と near-488 nm 文献値をもとに固定し、まず ChR2 expression/sensitivity を fit する。光学パラメータは、soma/apical/basal の相対応答や面積依存が ChR2 expression だけでは説明できない場合に限って見直す。
 
 最初は global optimization ではなく、grid search と Bayesian optimization の中間程度の現実的な探索でよい。
 
-### Phase 7: ネットワーク入力用の surrogate を作る
+### Phase 9: ネットワーク入力用の surrogate を作る
 
 NEURON の単一細胞モデルを毎回ネットワーク最適化に使うと重いので、入力変換用の surrogate を作る。
 
@@ -266,3 +384,24 @@ NEURON の単一細胞モデルを毎回ネットワーク最適化に使うと�
 - Thy1-ChR2 の発現量・分布は不確実性が大きいため、固定値ではなく推定パラメータとして扱う。
 - Dura-Bernal フルモデルの詳細な biophysics を残しすぎると重くなるため、単一細胞で必要な機能と、ネットワークで必要な機能を分離して実装する。
 
+## 次に進める優先順位
+
+計算負荷と実験的な解釈しやすさを考えると、次の順序がよい。
+
+1. Phase 4A: 中心刺激で square/circle の面積閾値を出す。
+2. Phase 4B: 閾値より少し大きい刺激を使い、中心と端の latency 差を見る。
+3. Phase 6: 初期膜電位や holding current を振り、in vivo に近い baseline で必要光量がどれだけ下がるか見る。
+4. Phase 5: 長時間弱刺激、PWM、repeated stimulation を見る。
+5. Phase 4C: 分散刺激を少数の手設計パターンで試す。
+6. Phase 7: それでも初期状態依存性が単一細胞では表現できない場合に microcircuit を入れる。
+
+この順序にすると、重い microcircuit に進む前に、単一細胞で説明できる部分と説明できない部分を切り分けられる。
+
+## 追加で検討すべきこと
+
+- baseline membrane potential: 静止膜電位から発火させる条件だけでは、in vivo の必要光量を過大評価する可能性が高い。
+- stimulus energy: peak irradiance だけでなく、総光量、照射面積、照射時間を常に記録する。
+- photocurrent summary: 発火閾値だけでなく、peak ChR2 current と integrated charge を保存する。
+- dendrite/soma contribution: 各刺激で apical, basal, soma が受ける irradiance と current を分けて保存する。
+- expression fitting: 光学パラメータは Yona/near-488 nm 文献値で固定し、まず ChR2 expression/sensitivity だけを patch data に fit する。
+- abstraction boundary: microcircuit は「初期状態のばらつきと背景入力を生成するもの」として導入し、最初から運動出力まで説明しようとしない。
