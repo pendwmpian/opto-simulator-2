@@ -1,0 +1,6 @@
+.venv/
+.mplconfig/
+external/
+outputs/
+__pycache__/
+*.pyc
