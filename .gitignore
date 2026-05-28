@@ -2,5 +2,6 @@
 .mplconfig/
 external/
 outputs/
+arm64/
 __pycache__/
 *.pyc
