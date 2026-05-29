@@ -52,9 +52,10 @@ def section_kind(name: str) -> str:
 
 
 class CellFromNetPyNE:
-    def __init__(self, cell_params: Path):
+    def __init__(self, cell_params: Path, use_original_biophysics: bool = False):
         self.rule = load_pickle(cell_params)
         self.sections: dict[str, h.Section] = {}
+        self.use_original_biophysics = use_original_biophysics
         self._create_sections()
         self._connect_sections()
         self._apply_biophysics()
@@ -84,6 +85,9 @@ class CellFromNetPyNE:
             self.sections[name].connect(parent(float(topol.get("parentX", 1.0))), float(topol.get("childX", 0.0)))
 
     def _apply_biophysics(self) -> None:
+        if self.use_original_biophysics:
+            self._apply_original_biophysics()
+            return
         for name, sec in self.sections.items():
             kind = section_kind(name)
             sec.insert("pas")
@@ -107,6 +111,49 @@ class CellFromNetPyNE:
                 sec.gkbar_hh = 0.006
                 sec.gl_hh = 2.0e-5
                 sec.el_hh = -70.0
+
+    def _apply_original_biophysics(self) -> None:
+        for name, sec in self.sections.items():
+            sec_rule = self.rule["secs"][name]
+            for mech_name, params in sec_rule.get("mechs", {}).items():
+                sec.insert(mech_name)
+                for param_name, value in params.items():
+                    self._set_mech_param(sec, mech_name, param_name, value)
+            self._apply_ion_params(sec, sec_rule.get("ions", {}))
+
+    @staticmethod
+    def _apply_ion_params(sec, ions: dict) -> None:
+        ion_attr = {
+            "na": {"i": "nai", "o": "nao", "e": "ena"},
+            "k": {"i": "ki", "o": "ko", "e": "ek"},
+            "ca": {"i": "cai", "o": "cao", "e": "eca"},
+        }
+        for ion_name, params in ions.items():
+            for param_name, attr in ion_attr.get(ion_name, {}).items():
+                if param_name in params:
+                    setattr(sec, attr, float(params[param_name]))
+
+    @staticmethod
+    def _set_mech_param(sec, mech_name: str, param_name: str, value) -> None:
+        attr = f"{param_name}_{mech_name}"
+        if isinstance(value, list):
+            if len(value) == 0:
+                return
+            segments = list(sec)
+            if len(value) == len(segments):
+                for seg, item in zip(segments, value):
+                    setattr(getattr(seg, mech_name), param_name, float(item))
+            else:
+                xs = np.linspace(0.0, 1.0, len(value))
+                for seg in segments:
+                    item = float(np.interp(float(seg.x), xs, value))
+                    setattr(getattr(seg, mech_name), param_name, item)
+            return
+        try:
+            setattr(sec, attr, float(value))
+        except Exception:
+            for seg in sec:
+                setattr(getattr(seg, mech_name), param_name, float(value))
 
     def surface_y(self) -> float:
         ys = []

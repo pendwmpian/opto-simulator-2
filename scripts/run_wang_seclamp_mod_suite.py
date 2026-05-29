@@ -47,6 +47,9 @@ class ModSuiteResult:
     peak_1s_9p2_nA: float
     time_to_peak_1s_9p2_ms: float
     inactivation_tau_1s_9p2_ms: float | None
+    soma_v_min_mV: float
+    soma_v_max_mV: float
+    soma_v_mean_mV: float
     intensity_k_mw_mm2: float | None
     intensity_imax_nA: float
     intensity_hill_n: float
@@ -231,10 +234,52 @@ def simulate_mod_current(
     protocol_irradiance_scale: float = 1.0,
     q10_scales: dict[str, float] | None = None,
     use_photon_flux: bool = False,
+    use_original_biophysics: bool = False,
+    subtract_no_light: bool = False,
+    return_raw_current: bool = False,
 ):
+    if subtract_no_light:
+        t_light, i_light, v_light = simulate_mod_current(
+            cell_params,
+            rows_template,
+            gbar_mS_cm2,
+            irradiance_scale,
+            rs_mohm,
+            protocol,
+            dt_ms,
+            tstop_ms,
+            pulse_duration_ms,
+            protocol_irradiance_scale=protocol_irradiance_scale,
+            q10_scales=q10_scales,
+            use_photon_flux=use_photon_flux,
+            use_original_biophysics=use_original_biophysics,
+            subtract_no_light=False,
+            return_raw_current=True,
+        )
+        t_base, i_base, _ = simulate_mod_current(
+            cell_params,
+            rows_template,
+            gbar_mS_cm2,
+            irradiance_scale,
+            rs_mohm,
+            protocol,
+            dt_ms,
+            tstop_ms,
+            0.0,
+            protocol_irradiance_scale=0.0,
+            q10_scales=q10_scales,
+            use_photon_flux=use_photon_flux,
+            use_original_biophysics=use_original_biophysics,
+            subtract_no_light=False,
+            return_raw_current=True,
+        )
+        if len(i_base) != len(i_light):
+            i_base = np.interp(t_light, t_base, i_base)
+        return t_light, np.abs(i_light - i_base), v_light
+
     h.load_file("stdrun.hoc")
     h.celsius = 22.0
-    cell = CellFromNetPyNE(cell_params)
+    cell = CellFromNetPyNE(cell_params, use_original_biophysics=use_original_biophysics)
     rows = install_chr2(
         cell,
         rows_template,
@@ -254,14 +299,20 @@ def simulate_mod_current(
     h.finitialize(protocol.holding_voltage_mV)
     times = []
     currents = []
+    voltages = []
+    soma = soma_section(cell)(0.5)
     while h.t <= tstop_ms:
         light_on = 0.0 <= h.t < pulse_duration_ms
         for row in rows:
             row["seg"].chr2_4state.irr = row["base_irradiance_mw_mm2"] * protocol_irradiance_scale if light_on else 0.0
         times.append(float(h.t))
-        currents.append(float(abs(clamp.i)))
+        currents.append(float(clamp.i))
+        voltages.append(float(soma.v))
         h.fadvance()
-    return np.asarray(times), np.asarray(currents)
+    current = np.asarray(currents)
+    if not return_raw_current:
+        current = np.abs(current)
+    return np.asarray(times), current, np.asarray(voltages)
 
 
 def calibrate_gbar(
@@ -277,13 +328,14 @@ def calibrate_gbar(
     target_current_nA,
     calibration_irradiance_mw_mm2,
     calibration_duration_ms,
+    use_original_biophysics=False,
 ):
     lo = 1.0e-5
     hi = 1.0
     last = None
     for _ in range(iterations):
         mid = (lo * hi) ** 0.5
-        t, current = simulate_mod_current(
+        t, current, _ = simulate_mod_current(
             cell_params,
             rows,
             mid,
@@ -296,6 +348,8 @@ def calibrate_gbar(
             protocol_irradiance_scale=calibration_irradiance_mw_mm2 / protocol.irradiance_mw_mm2,
             q10_scales=q10_scales,
             use_photon_flux=use_photon_flux,
+            use_original_biophysics=use_original_biophysics,
+            subtract_no_light=use_original_biophysics,
         )
         peak = float(np.max(current))
         last = (mid, t, current)
@@ -339,8 +393,9 @@ def run_condition(label, cell_params, rows, rs_mohm, irradiance_scale, q10, prot
         target_current_nA,
         calibration_irradiance_mw_mm2,
         calibration_duration_ms,
+        getattr(args, "use_original_biophysics", False),
     )
-    t, current = simulate_mod_current(
+    t, current, soma_v = simulate_mod_current(
         cell_params,
         rows,
         gbar,
@@ -352,13 +407,15 @@ def run_condition(label, cell_params, rows, rs_mohm, irradiance_scale, q10, prot
         1000.0,
         q10_scales=q10_scales,
         use_photon_flux=use_photon_flux,
+        use_original_biophysics=getattr(args, "use_original_biophysics", False),
+        subtract_no_light=getattr(args, "use_original_biophysics", False),
     )
     peak, _, time_to_peak, tau = current_metrics(t, current, protocol)
 
     intensity_values = WANG_INTENSITY_VALUES_MW_MM2
     intensity_peaks = []
     for irr in intensity_values:
-        _, current_i = simulate_mod_current(
+        _, current_i, _ = simulate_mod_current(
             cell_params,
             rows,
             gbar,
@@ -371,6 +428,8 @@ def run_condition(label, cell_params, rows, rs_mohm, irradiance_scale, q10, prot
             protocol_irradiance_scale=irr / protocol.irradiance_mw_mm2,
             q10_scales=q10_scales,
             use_photon_flux=use_photon_flux,
+            use_original_biophysics=getattr(args, "use_original_biophysics", False),
+            subtract_no_light=getattr(args, "use_original_biophysics", False),
         )
         intensity_peaks.append(float(np.max(current_i)))
     intensity_k, intensity_imax, intensity_hill_n = fit_hill_k(intensity_values, intensity_peaks)
@@ -378,7 +437,7 @@ def run_condition(label, cell_params, rows, rs_mohm, irradiance_scale, q10, prot
     duration_values = [1, 2, 3, 4, 5, 8, 10, 20, 50, 100]
     duration_peaks = []
     for dur in duration_values:
-        _, current_d = simulate_mod_current(
+        _, current_d, _ = simulate_mod_current(
             cell_params,
             rows,
             gbar,
@@ -390,6 +449,8 @@ def run_condition(label, cell_params, rows, rs_mohm, irradiance_scale, q10, prot
             float(dur),
             q10_scales=q10_scales,
             use_photon_flux=use_photon_flux,
+            use_original_biophysics=getattr(args, "use_original_biophysics", False),
+            subtract_no_light=getattr(args, "use_original_biophysics", False),
         )
         duration_peaks.append(float(np.max(current_d)))
 
@@ -412,6 +473,9 @@ def run_condition(label, cell_params, rows, rs_mohm, irradiance_scale, q10, prot
         peak_1s_9p2_nA=float(peak),
         time_to_peak_1s_9p2_ms=float(time_to_peak),
         inactivation_tau_1s_9p2_ms=tau,
+        soma_v_min_mV=float(np.min(soma_v)),
+        soma_v_max_mV=float(np.max(soma_v)),
+        soma_v_mean_mV=float(np.mean(soma_v)),
         intensity_k_mw_mm2=intensity_k,
         intensity_imax_nA=float(intensity_imax),
         intensity_hill_n=float(intensity_hill_n),
@@ -498,6 +562,7 @@ def main():
     parser.add_argument("--vitro-mu-eff-mm-inv", type=float, default=2.12)
     parser.add_argument("--dt-ms", type=float, default=0.1)
     parser.add_argument("--binary-iterations", type=int, default=12)
+    parser.add_argument("--use-original-biophysics", action="store_true")
     args = parser.parse_args()
 
     load_mechanisms(args.repo_root.resolve())

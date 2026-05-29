@@ -115,3 +115,58 @@ duration K:
 ```
 
 The next refinement, if needed, should target prolonged desensitization/recovery kinetics or a more complete electrode-feedback circuit, not the initial fast component.
+
+## Original-Biophysics Reference Result
+
+The current reference condition uses the original Dura-Bernal PT5B active mechanisms, applies section-level ion parameters from `cellParams.pkl`, subtracts a matched no-light baseline trace, and keeps the same Wang-style recording readout:
+
+```text
+SEClamp series/access resistance:
+  Rs = 10 Mohm
+
+pipette/electrode RC readout:
+  R_electrode = 10 Mohm
+  C_pipette = 100 pF
+  tau = 1.0 ms
+
+amplifier/display filter:
+  4 cascaded first-order low-pass stages
+  tau = 0.25 ms per stage
+
+optical condition:
+  in vitro mu_eff = 1.3 mm^-1
+```
+
+Output:
+
+```text
+outputs/wang2007_electrode_amplifier_original_biophys_Rs10_tau1/electrode_amplifier_summary.csv
+outputs/wang2007_electrode_amplifier_original_biophys_Rs10_tau1/electrode_amplifier_summary.png
+```
+
+Result:
+
+```text
+fitted gbar:
+  0.10090 mS/cm2
+
+raw SEClamp, before electrode/amplifier readout:
+  9.2 mW/mm2 peak = 0.590 nA
+  time-to-peak = 7.65 ms
+  inactivation tau = 27.19 ms
+  early peak fraction = 0.278
+  intensity K = 0.906 mW/mm2
+
+filtered electrode/amplifier readout:
+  9.2 mW/mm2 peak = 0.581 nA
+  time-to-peak = 9.80 ms
+  inactivation tau = 27.39 ms
+  early peak fraction = 0.041
+  intensity K = 0.864 mW/mm2
+  duration K = 2.15 ms
+
+voltage-clamp quality:
+  soma voltage range = -71.29 to -65.60 mV
+```
+
+This is now the preferred Wang Fig. 2A-C reference value for the in vitro PT5B calibration. The voltage clamp is imperfect, but that is expected for this access resistance and large distributed photocurrent. The key point is that using a realistic recording readout moves the apparent intensity K close to Wang's reported 0.84 +/- 0.2 mW/mm2 while preserving original active conductances.

@@ -14,7 +14,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from calibrate_wang2007_gbar import Wang2007Protocol, current_metrics, half_max_x
-from diagnose_wang_chr2_intensity_kinetics import simulate_diagnostic
 from run_wang_seclamp_mod_suite import (
     WANG_INTENSITY_VALUES_MW_MM2,
     add_localization_weights,
@@ -22,6 +21,7 @@ from run_wang_seclamp_mod_suite import (
     fit_hill_k,
     load_mechanisms,
     prepare_template_rows,
+    simulate_mod_current,
     williams_q10_scales,
 )
 from run_chr2_single_cell_sweep import CellFromNetPyNE
@@ -48,16 +48,25 @@ def apply_electrode_amplifier_readout(t: np.ndarray, current: np.ndarray, args) 
     return y
 
 
-def run_trace(cell_params, rows, gbar, irradiance, pulse_duration_ms, tstop_ms, args, protocol):
-    old_tstop = args.tstop_ms
-    old_pulse = args.pulse_duration_ms
-    args.tstop_ms = tstop_ms
-    args.pulse_duration_ms = pulse_duration_ms
-    trace = simulate_diagnostic(cell_params, rows, gbar, irradiance, args, protocol)
-    args.tstop_ms = old_tstop
-    args.pulse_duration_ms = old_pulse
-    trace["filtered_i"] = apply_electrode_amplifier_readout(trace["t"], trace["clamp_i"], args)
-    return trace
+def run_trace(cell_params, rows, gbar, irradiance, pulse_duration_ms, tstop_ms, args, protocol, q10_scales):
+    t, clamp_i, soma_v = simulate_mod_current(
+        cell_params,
+        rows,
+        gbar,
+        args.irradiance_scale,
+        args.rs_mohm,
+        protocol,
+        args.dt_ms,
+        tstop_ms,
+        pulse_duration_ms,
+        protocol_irradiance_scale=irradiance / protocol.irradiance_mw_mm2,
+        q10_scales=q10_scales,
+        use_photon_flux=True,
+        use_original_biophysics=args.use_original_biophysics,
+        subtract_no_light=args.use_original_biophysics,
+    )
+    filtered_i = apply_electrode_amplifier_readout(t, clamp_i, args)
+    return {"t": t, "clamp_i": clamp_i, "filtered_i": filtered_i, "soma_v": soma_v}
 
 
 def early_metrics(t: np.ndarray, current: np.ndarray, peak: float) -> tuple[float, float]:
@@ -72,8 +81,8 @@ def main():
     parser.add_argument("--repo-root", type=Path, default=Path("."))
     parser.add_argument("--cell-params", type=Path, default=Path("external/M1_NetPyNE_CellReports_2023/sim/cells/PT5B_full_cellParams.pkl"))
     parser.add_argument("--label", default="PT5B_full")
-    parser.add_argument("--rs-mohm", type=float, default=10.0)
-    parser.add_argument("--electrode-rs-mohm", type=float, default=10.0)
+    parser.add_argument("--rs-mohm", type=float, default=5.0)
+    parser.add_argument("--electrode-rs-mohm", type=float, default=5.0)
     parser.add_argument("--pipette-capacitance-pf", type=float, default=100.0)
     parser.add_argument("--amplifier-filter-tau-ms", type=float, default=0.25)
     parser.add_argument("--amplifier-filter-order", type=int, default=4)
@@ -82,7 +91,7 @@ def main():
     parser.add_argument("--slice-axis", choices=["x", "z"], default="z")
     parser.add_argument("--illumination-axis", choices=["x", "z"], default="z")
     parser.add_argument("--truncate-radius-um", type=float, default=500.0)
-    parser.add_argument("--vitro-mu-eff-mm-inv", type=float, default=2.12)
+    parser.add_argument("--vitro-mu-eff-mm-inv", type=float, default=1.3)
     parser.add_argument("--localization", default="uniform")
     parser.add_argument("--proximal-cutoff-um", type=float, default=150.0)
     parser.add_argument("--reference-c", type=float, default=37.0)
@@ -98,6 +107,7 @@ def main():
     parser.add_argument("--e21-scale", type=float, default=1.0)
     parser.add_argument("--gd2-scale", type=float, default=1.0)
     parser.add_argument("--gamma-scale", type=float, default=1.0)
+    parser.add_argument("--use-original-biophysics", action="store_true")
     args = parser.parse_args()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -121,9 +131,10 @@ def main():
         protocol.target_imax_nA,
         args.saturating_irradiance_mw_mm2,
         args.saturating_duration_ms,
+        args.use_original_biophysics,
     )
 
-    trace_9p2 = run_trace(args.cell_params, rows, gbar, 9.2, 1000.0, 1200.0, args, protocol)
+    trace_9p2 = run_trace(args.cell_params, rows, gbar, 9.2, 1000.0, 1200.0, args, protocol, q10_scales)
     raw_peak, _, raw_ttp, raw_tau = current_metrics(trace_9p2["t"], trace_9p2["clamp_i"], protocol)
     filt_peak, _, filt_ttp, filt_tau = current_metrics(trace_9p2["t"], trace_9p2["filtered_i"], protocol)
     raw_early, raw_early_frac = early_metrics(trace_9p2["t"], trace_9p2["clamp_i"], raw_peak)
@@ -133,7 +144,7 @@ def main():
     intensity_ttps = []
     raw_intensity_peaks = []
     for irr in WANG_INTENSITY_VALUES_MW_MM2:
-        trace = run_trace(args.cell_params, rows, gbar, irr, 100.0, 180.0, args, protocol)
+        trace = run_trace(args.cell_params, rows, gbar, irr, 100.0, 180.0, args, protocol, q10_scales)
         raw_peak_i, _, _, _ = current_metrics(trace["t"], trace["clamp_i"], protocol)
         peak_i, _, ttp_i, _ = current_metrics(trace["t"], trace["filtered_i"], protocol)
         raw_intensity_peaks.append(float(raw_peak_i))
@@ -145,7 +156,7 @@ def main():
     duration_values = [1, 2, 3, 4, 5, 8, 10, 20, 50, 100]
     duration_peaks = []
     for dur in duration_values:
-        trace = run_trace(args.cell_params, rows, gbar, 9.2, float(dur), max(120.0, float(dur) + 60.0), args, protocol)
+        trace = run_trace(args.cell_params, rows, gbar, 9.2, float(dur), max(120.0, float(dur) + 60.0), args, protocol, q10_scales)
         peak_d, _, _, _ = current_metrics(trace["t"], trace["filtered_i"], protocol)
         duration_peaks.append(float(peak_d))
     duration_k = half_max_x([float(v) for v in duration_values], duration_peaks)
@@ -174,6 +185,9 @@ def main():
         "filtered_intensity_imax_nA": intensity_imax,
         "filtered_intensity_hill_n": intensity_hill_n,
         "filtered_duration_k_ms": duration_k,
+        "soma_v_min_mV": float(np.min(trace_9p2["soma_v"])),
+        "soma_v_max_mV": float(np.max(trace_9p2["soma_v"])),
+        "soma_v_mean_mV": float(np.mean(trace_9p2["soma_v"])),
         "filtered_ttp_0p07_ms": intensity_ttps[0],
         "filtered_ttp_0p58_ms": intensity_ttps[3],
         "filtered_ttp_2p3_ms": intensity_ttps[5],

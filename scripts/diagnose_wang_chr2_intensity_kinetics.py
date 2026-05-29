@@ -57,7 +57,7 @@ def first_peak_time(t: np.ndarray, y: np.ndarray, max_t_ms: float = 120.0) -> fl
 def simulate_diagnostic(cell_params, rows_template, gbar, irradiance, args, protocol):
     h.load_file("stdrun.hoc")
     h.celsius = args.target_c
-    cell = CellFromNetPyNE(cell_params)
+    cell = CellFromNetPyNE(cell_params, use_original_biophysics=getattr(args, "use_original_biophysics", False))
     q10_scales = williams_q10_scales(args.reference_c, args.target_c)
     rows = install_chr2(cell, rows_template, gbar, args.irradiance_scale, q10_scales, True)
     c2_init = args.c2_initial
