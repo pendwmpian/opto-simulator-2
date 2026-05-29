@@ -40,6 +40,37 @@ class FoutzNikolicRates:
     gr_ms: float = 0.0004
     gamma: float = 0.05
 
+    def temperature_scaled(self, q10: float, reference_c: float = 37.0, target_c: float = 22.0) -> "FoutzNikolicRates":
+        factor = q10 ** ((reference_c - target_c) / 10.0)
+        return self.temperature_scaled_groups(q10, q10, q10, q10, reference_c, target_c)
+
+    def temperature_scaled_groups(
+        self,
+        q10_open: float,
+        q10_close: float,
+        q10_adapt: float,
+        q10_recovery: float,
+        reference_c: float = 37.0,
+        target_c: float = 22.0,
+    ) -> "FoutzNikolicRates":
+        exponent = (reference_c - target_c) / 10.0
+        open_factor = q10_open**exponent
+        close_factor = q10_close**exponent
+        adapt_factor = q10_adapt**exponent
+        recovery_factor = q10_recovery**exponent
+        return FoutzNikolicRates(
+            k1_per_mw_ms=self.k1_per_mw_ms / open_factor,
+            k2_per_mw_ms=self.k2_per_mw_ms / open_factor,
+            gd1_ms=self.gd1_ms / close_factor,
+            gd2_ms=self.gd2_ms / close_factor,
+            e12_light_ms=self.e12_light_ms / adapt_factor,
+            e21_light_ms=self.e21_light_ms / adapt_factor,
+            e12_dark_ms=self.e12_dark_ms / adapt_factor,
+            e21_dark_ms=self.e21_dark_ms / adapt_factor,
+            gr_ms=self.gr_ms / recovery_factor,
+            gamma=self.gamma,
+        )
+
 
 @dataclass(frozen=True)
 class ScaleSet:
@@ -62,6 +93,11 @@ class ChaterMetrics:
     stim_300ms_decay_tau_ms: float | None
     stim_300ms_desensitization_fraction: float
     recovery_half_time_s: float | None
+    q10: float | None = None
+    q10_open: float | None = None
+    q10_close: float | None = None
+    q10_adapt: float | None = None
+    q10_recovery: float | None = None
 
 
 class FourState:
@@ -225,6 +261,36 @@ def evaluate(scales: ScaleSet, rates: FoutzNikolicRates, irradiance: float, dt_m
     )
 
 
+def evaluate_q10(q10: float, rates: FoutzNikolicRates, irradiance: float, dt_ms: float) -> ChaterMetrics:
+    scaled_rates = rates.temperature_scaled(q10)
+    metrics = evaluate(ScaleSet(1.0, 1.0, 1.0, 1.0), scaled_rates, irradiance, dt_ms)
+    return ChaterMetrics(**(asdict(metrics) | {"q10": q10}))
+
+
+def evaluate_q10_groups(
+    q10_open: float,
+    q10_close: float,
+    q10_adapt: float,
+    q10_recovery: float,
+    rates: FoutzNikolicRates,
+    irradiance: float,
+    dt_ms: float,
+) -> ChaterMetrics:
+    scaled_rates = rates.temperature_scaled_groups(q10_open, q10_close, q10_adapt, q10_recovery)
+    metrics = evaluate(ScaleSet(1.0, 1.0, 1.0, 1.0), scaled_rates, irradiance, dt_ms)
+    return ChaterMetrics(
+        **(
+            asdict(metrics)
+            | {
+                "q10_open": q10_open,
+                "q10_close": q10_close,
+                "q10_adapt": q10_adapt,
+                "q10_recovery": q10_recovery,
+            }
+        )
+    )
+
+
 def plot_best(best: ChaterMetrics, rates: FoutzNikolicRates, irradiance: float, dt_ms: float, out: Path):
     scales = ScaleSet(best.s_open, best.s_close, best.s_adapt, best.s_recovery)
     fig, axes = plt.subplots(1, 3, figsize=(12.5, 3.8), constrained_layout=True)
@@ -246,10 +312,66 @@ def main():
     parser.add_argument("--out-dir", type=Path, default=Path("outputs/chater2010_chr2_temperature"))
     parser.add_argument("--irradiance-mw-mm2", type=float, default=1.0)
     parser.add_argument("--dt-ms", type=float, default=0.02)
+    parser.add_argument("--mode", choices=["grid", "q10", "q10-groups"], default="grid")
+    parser.add_argument("--q10-values", default="1.5,2.0,2.5,3.0")
     args = parser.parse_args()
 
     rates = FoutzNikolicRates()
     args.out_dir.mkdir(parents=True, exist_ok=True)
+    if args.mode == "q10":
+        results = [
+            evaluate_q10(float(raw.strip()), rates, args.irradiance_mw_mm2, args.dt_ms)
+            for raw in args.q10_values.split(",")
+            if raw.strip()
+        ]
+        results.sort(key=lambda r: r.score)
+        best = results[0]
+        with (args.out_dir / "chater2010_q10_results.csv").open("w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=list(asdict(best).keys()))
+            writer.writeheader()
+            writer.writerows(asdict(r) for r in results)
+        with (args.out_dir / "chater2010_q10_best.json").open("w") as f:
+            json.dump({"baseline_rates": asdict(rates), "best": asdict(best)}, f, indent=2)
+        best_rates = rates.temperature_scaled(best.q10 if best.q10 is not None else 2.0)
+        plot_best(best, best_rates, args.irradiance_mw_mm2, args.dt_ms, args.out_dir / "chater2010_q10_best_traces.png")
+        print(best)
+        return
+    if args.mode == "q10-groups":
+        values = [float(raw.strip()) for raw in args.q10_values.split(",") if raw.strip()]
+        results = []
+        for q_open in values:
+            for q_close in values:
+                for q_adapt in values:
+                    for q_recovery in values:
+                        results.append(
+                            evaluate_q10_groups(
+                                q_open,
+                                q_close,
+                                q_adapt,
+                                q_recovery,
+                                rates,
+                                args.irradiance_mw_mm2,
+                                args.dt_ms,
+                            )
+                        )
+        results.sort(key=lambda r: r.score)
+        best = results[0]
+        with (args.out_dir / "chater2010_q10_group_results.csv").open("w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=list(asdict(best).keys()))
+            writer.writeheader()
+            writer.writerows(asdict(r) for r in results)
+        with (args.out_dir / "chater2010_q10_group_best.json").open("w") as f:
+            json.dump({"baseline_rates": asdict(rates), "best": asdict(best)}, f, indent=2)
+        best_rates = rates.temperature_scaled_groups(
+            best.q10_open or 2.0,
+            best.q10_close or 2.0,
+            best.q10_adapt or 2.0,
+            best.q10_recovery or 2.0,
+        )
+        plot_best(best, best_rates, args.irradiance_mw_mm2, args.dt_ms, args.out_dir / "chater2010_q10_group_best_traces.png")
+        print(best)
+        return
+
     scale_values = {
         "open": [0.25, 0.35, 0.5, 0.7, 1.0],
         "close": [0.5, 0.7, 1.0, 1.4, 2.0],

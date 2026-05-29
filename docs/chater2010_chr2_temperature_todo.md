@@ -145,3 +145,114 @@ Next steps:
 1. Port the Foutz/Nikolic equations more faithfully instead of using the older simplified `k1_per_mw_ms/k2_per_mw_ms` scaffold.
 2. Then rerun the same Chater 22 C evaluation.
 3. Only if the faithful model still cannot match Chater with grouped temperature scaling should we consider a different ChR2 model family.
+
+## Williams Q10 Transfer Experiment
+
+Rationale:
+
+- Williams et al. 2013 models ChR2(H134R), not wild-type ChR2.
+- The absolute Williams parameters should not replace the wild-type Foutz/Nikolic parameter set.
+- However, the temperature scaling / Q10 values from Williams can be used as a plausible ChR2-family temperature correction.
+- To avoid overclaiming, sweep Q10 around the Williams-inspired range and validate against Chater 2010 wild-type 22 C kinetics.
+
+Experiment:
+
+```text
+baseline:
+  Foutz/Nikolic wild-type ChR2 rates treated as 37 C reference
+
+temperature conversion:
+  rate_22 = rate_37 / Q10^((37 - 22) / 10)
+
+Q10 sweep:
+  1.5, 2.0, 2.5, 3.0
+
+rate groups:
+  opening rates
+  closing rates
+  adaptation/desensitization rates
+  recovery rate
+
+first pass:
+  apply same Q10 to all kinetic groups
+
+second pass:
+  optionally allow group-specific Q10 values around the same range if the one-Q10 model fails badly
+```
+
+Validation:
+
+```text
+Use the same Chater targets:
+  2 ms flash time to peak = 2.9 ms
+  2 ms flash decay tau = 7.2 ms
+  1 ms flash decay tau = 10.7 ms
+  300 ms stimulus off-decay tau = 11.5 ms
+  300 ms desensitization ~= 75%
+  recovery half-time = 3.1 s
+```
+
+Decision rule:
+
+- If one-Q10 scaling gets close enough, use that 22 C parameter set for Wang suite.
+- If one-Q10 scaling fails selectively, inspect which group needs a different Q10.
+- Do not fit to Wang kinetics.
+
+First Q10 transfer result:
+
+```text
+outputs:
+  outputs/chater2010_q10_transfer/chater2010_q10_results.csv
+  outputs/chater2010_q10_group_transfer/chater2010_q10_group_results.csv
+```
+
+One-Q10 scaling result:
+
+```text
+Q10 values tested: 1.5, 2.0, 2.5, 3.0
+best one-Q10 value: 1.5
+
+2 ms flash time to peak = 1.98 ms
+2 ms flash decay tau = 10.01 ms
+1 ms flash decay tau = 10.14 ms
+300 ms stimulus off-decay tau = 19.14 ms
+300 ms desensitization fraction = 0.54
+recovery half-time = not reached in the tested interval range
+```
+
+Interpretation:
+
+- A single Q10 applied to all kinetic rates is not adequate.
+- It improves 1 ms flash deactivation but makes longer-stimulus decay too slow and does not solve the too-early 2 ms flash peak.
+
+Group-specific Q10 result:
+
+```text
+Q10 candidates per group: 1.0, 1.5, 2.0, 2.5
+best:
+  q10_open = 1.0
+  q10_close = 1.0
+  q10_adapt = 2.5
+  q10_recovery = 1.5
+
+2 ms flash time to peak = 1.98 ms
+2 ms flash decay tau = 7.18 ms
+1 ms flash decay tau = 7.20 ms
+300 ms stimulus off-decay tau = 11.68 ms
+300 ms desensitization fraction = 0.59
+recovery half-time = 4.03 s
+```
+
+Interpretation:
+
+- Group-specific Q10 improves 2 ms decay and 300 ms off-decay.
+- It still does not reproduce Chater fully:
+  - 2 ms flash peak remains too early;
+  - 1 ms flash deactivation remains too fast;
+  - 300 ms desensitization remains too weak;
+  - recovery is slower than target.
+- Best result leaves opening and closing unscaled, while strongly temperature-scaling adaptation. This is not a clean mechanistic solution.
+
+Current conclusion:
+
+Q10 transfer alone is not enough with the current simplified light-opening scaffold. The next scientifically cleaner step is to port the full Foutz/Nikolic photon-flux activation formula before drawing conclusions about whether Williams-style Q10 transfer can explain Chater 22 C kinetics.
