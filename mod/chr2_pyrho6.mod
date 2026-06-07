@@ -2,7 +2,7 @@ NEURON {
     SUFFIX chr2_pyrho6
     NONSPECIFIC_CURRENT i
     RANGE gbar, e, gamma, irr, wavelength_nm
-    RANGE phi_m, k1, k2, p_exp, gf0, kf, gb0, kb, q_exp, go1, go2, gd1, gd2, gr0
+    RANGE phi_m, phi_m_scale, k1, k2, p_exp, gf0, kf, gb0, kb, q_exp, go1, go2, gd1, gd2, gr0
     RANGE q10_scale
     RANGE c1, i1, o1, o2, i2, c2, open, flux
 }
@@ -23,6 +23,7 @@ PARAMETER {
     : PyRhO six-state ChR2 fit values, units are ms^-1 except phi_m.
     : Table values follow Evans et al. 2016 / PyRhO ChR2 six-state example fit.
     phi_m = 5.02e17
+    phi_m_scale = 1.0
     k1 = 18.2 (/ms)
     k2 = 4.07 (/ms)
     p_exp = 0.981
@@ -87,8 +88,8 @@ DERIVATIVE states {
     hp = 0.0
     hq = 0.0
     if (flux > 0.0) {
-        hp = flux^p_exp / (flux^p_exp + phi_m^p_exp)
-        hq = flux^q_exp / (flux^q_exp + phi_m^q_exp)
+        hp = flux^p_exp / (flux^p_exp + (phi_m * phi_m_scale)^p_exp)
+        hq = flux^q_exp / (flux^q_exp + (phi_m * phi_m_scale)^q_exp)
     }
 
     ga1 = q10_scale * k1 * hp
