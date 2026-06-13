@@ -1,0 +1,12 @@
+[project]
+name = "opto-simulator-2"
+version = "0.1.0"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "mpi4py>=4.1.2",
+    "netpyne>=1.1.1",
+    "neuron>=9.0.1",
+    "numpy>=2.4.6",
+    "psutil>=7.2.2",
+    "scipy>=1.17.1",
+]

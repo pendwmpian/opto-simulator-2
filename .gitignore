@@ -5,3 +5,6 @@ outputs/
 arm64/
 __pycache__/
 *.pyc
+docs-temp/full-model-runs/
+docs-temp/*.tar.gz
+docs-temp/*.tar.gz.sha256
