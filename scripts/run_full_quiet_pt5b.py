@@ -36,6 +36,7 @@ def main():
     parser.add_argument("--duration-ms", type=float, default=1000.0)
     parser.add_argument("--scale", type=float)
     parser.add_argument("--build-only", action="store_true")
+    parser.add_argument("--record-pt5b-all", action="store_true")
     parser.add_argument("--single-cell-pops", action="store_true")
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
@@ -103,8 +104,9 @@ def main():
 
     local_pt5b = sorted(int(c.gid) for c in sim.net.cells if c.tags.get("pop") == "PT5B")
     gathered_pt5b = sim.pc.py_alltoall([local_pt5b] * nhost)
-    target_gid = sorted(gid for group in gathered_pt5b for gid in group)[0]
-    cfg.recordCells = [target_gid]
+    all_pt5b_gids = sorted(gid for group in gathered_pt5b for gid in group)
+    target_gid = all_pt5b_gids[0]
+    cfg.recordCells = all_pt5b_gids if args.record_pt5b_all else [target_gid]
 
     sim.net.connectCells()
     mark("after_connect_cells")
@@ -125,25 +127,40 @@ def main():
         np.savez_compressed(args.output_dir / "spikes.npz", spkt=spkt, spkid=spkid)
         trace = all_data.get("V_soma", {})
         voltage = np.asarray(trace.get(f"cell_{target_gid}", []), dtype=np.float32)
+        t_ms = np.arange(voltage.size, dtype=np.float64) * cfg.recordStep
         np.savez_compressed(
             args.output_dir / "target_vm.npz",
-            t_ms=np.arange(voltage.size, dtype=np.float64) * cfg.recordStep,
+            t_ms=t_ms,
             v_mV=voltage,
             target_gid=np.asarray([target_gid]),
         )
+        if args.record_pt5b_all:
+            pt5b_rows = [np.asarray(trace.get(f"cell_{gid}", []), dtype=np.float32) for gid in all_pt5b_gids]
+            max_len = max((row.size for row in pt5b_rows), default=0)
+            pt5b_vm = np.full((len(pt5b_rows), max_len), np.nan, dtype=np.float32)
+            for row_index, row in enumerate(pt5b_rows):
+                pt5b_vm[row_index, :row.size] = row
+            np.savez_compressed(
+                args.output_dir / "pt5b_vm.npz",
+                t_ms=np.arange(max_len, dtype=np.float64) * cfg.recordStep,
+                gids=np.asarray(all_pt5b_gids, dtype=np.int64),
+                v_mV=pt5b_vm,
+            )
         commit = subprocess.check_output(
             ["git", "-C", str(UPSTREAM), "rev-parse", "HEAD"], text=True
         ).strip()
         manifest = {
             "condition": "control_quiet", "trial": args.trial,
             "duration_ms": cfg.duration, "scale": cfg.scale,
+            "ihGbar": getattr(cfg, "ihGbar", None),
             "build_only": args.build_only, "seeds": dict(cfg.seeds),
-            "target_gid": target_gid, "nhost": nhost,
+            "target_gid": target_gid, "pt5b_gid_count": len(all_pt5b_gids),
+            "record_pt5b_all": args.record_pt5b_all, "nhost": nhost,
             "elapsed_seconds": time.time() - started,
             "upstream_commit": commit, "python": sys.version,
             "platform": platform.platform(), "neuron_version": neuron.__version__,
             "netpyne_version": netpyne_version, "record_step_ms": cfg.recordStep,
-            "output": ["all_spikes", "target_pt5b_soma_vm"],
+            "output": ["all_spikes", "target_pt5b_soma_vm"] + (["all_pt5b_soma_vm"] if args.record_pt5b_all else []),
         }
         (args.output_dir / "manifest.json").write_text(
             json.dumps(manifest, indent=2) + "\n", encoding="utf-8"

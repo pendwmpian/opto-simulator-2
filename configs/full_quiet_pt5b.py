@@ -10,6 +10,7 @@ def apply_run_only_overrides(cfg, *, duration_ms, trial, output_dir):
     seed_offset = 17 * trial
     cfg.duration = float(duration_ms)
     cfg.seeds = {"conn": 4321 + seed_offset, "stim": 1234 + seed_offset, "loc": 4321 + seed_offset}
+    cfg.ihGbar = 0.75
     cfg.ratesLong = {key: list(value) for key, value in QUIET_RATES_LONG.items()}
     cfg.addPulses = 0
     cfg.addIClamp = 0
