@@ -415,7 +415,39 @@ def plot_light_distribution(rows, label: str, out: Path, projection: str = "xy",
             ax.set_title(f"{label}: retained vertical slice x-y projection")
     else:
         ax.set_ylabel("slice thickness z (um)")
-        ax.set_title(f"{label}: side view x-z projection")
+        if view_from_light_entry:
+            # The model propagates light from low z toward high z. Put that
+            # entry face at the top of the side-view figure for readability.
+            ax.invert_yaxis()
+            entry_row = min(rows, key=lambda row: row.get("illumination_depth_um", float("inf")))
+            entry_z = float(entry_row["z"])
+            soma_rows = [row for row in rows if row["kind"] == "soma"]
+            soma_z = float(np.mean([row["z"] for row in soma_rows])) if soma_rows else float("nan")
+            ax.axhline(entry_z, color="#d62728", ls="--", lw=1.2)
+            ax.text(
+                0.02,
+                entry_z,
+                " light-entry face",
+                color="#d62728",
+                fontsize=8,
+                va="bottom",
+                transform=ax.get_yaxis_transform(),
+            )
+            if math.isfinite(soma_z):
+                ax.axhline(soma_z, color="#111111", ls=":", lw=1.0)
+                ax.text(
+                    0.98,
+                    soma_z,
+                    f"soma (~{soma_z - entry_z:.0f} um from entry) ",
+                    color="#111111",
+                    fontsize=8,
+                    ha="right",
+                    va="bottom",
+                    transform=ax.get_yaxis_transform(),
+                )
+            ax.set_title(f"{label}: x-z side view (light enters from top)")
+        else:
+            ax.set_title(f"{label}: side view x-z projection")
     cbar = fig.colorbar(lc, ax=ax)
     cbar.set_label("irradiance (mW/mm2)")
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -626,7 +658,13 @@ def main() -> None:
             projection="xy",
             view_from_light_entry=True,
         )
-        plot_light_distribution(rows, label, args.out_dir / f"{label}_vitro_irradiance_xz.png", projection="xz")
+        plot_light_distribution(
+            rows,
+            label,
+            args.out_dir / f"{label}_vitro_irradiance_xz.png",
+            projection="xz",
+            view_from_light_entry=True,
+        )
         plot_slice_light_schematic(rows, label, protocol.slice_thickness_um, args.illumination_axis, args.out_dir / f"{label}_slice_light_sideview.png")
         plot_current(t, current, label, result, protocol, args.out_dir / f"{label}_calibrated_current.png")
         protocol_suite_results.append(run_protocol_suite(rows, label, result.gbar_mS_cm2, protocol, args.dt_ms, args.out_dir))
