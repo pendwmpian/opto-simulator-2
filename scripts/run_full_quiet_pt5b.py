@@ -98,6 +98,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--trial", type=int, default=0, help="Metadata only; does not alter seeds")
     parser.add_argument("--duration-ms", type=float, default=3000.0)
+    parser.add_argument(
+        "--input-duration-ms",
+        type=float,
+        help="Generate duration-dependent inputs for this many ms, then simulate --duration-ms",
+    )
     parser.add_argument("--record-step-ms", type=float, default=0.1)
     parser.add_argument("--conn-seed", type=int, default=DEFAULT_SEEDS["conn"])
     parser.add_argument("--stim-seed", type=int, default=DEFAULT_SEEDS["stim"])
@@ -116,8 +121,11 @@ def main():
     args.output_dir.mkdir(parents=True, exist_ok=True)
     if any(args.output_dir.iterdir()):
         raise FileExistsError(f"Output directory must be empty: {args.output_dir}")
+    input_duration_ms = args.duration_ms if args.input_duration_ms is None else args.input_duration_ms
     if args.duration_ms <= 0 or args.record_step_ms <= 0:
         raise ValueError("duration and record step must be positive")
+    if input_duration_ms < args.duration_ms:
+        raise ValueError("input duration must be at least the simulation duration")
     upstream_dir = args.upstream_dir.resolve()
     sim_dir = upstream_dir / "sim"
     if not sim_dir.exists():
@@ -136,7 +144,7 @@ def main():
     seeds = {"conn": args.conn_seed, "stim": args.stim_seed, "loc": args.loc_seed}
     cfg = overrides.apply_run_only_overrides(
         cfg,
-        duration_ms=args.duration_ms,
+        duration_ms=input_duration_ms,
         trial=args.trial,
         output_dir=args.output_dir,
         seeds=seeds,
@@ -170,14 +178,14 @@ def main():
     # The upstream netParams module imports cfg from __main__.
     globals()["cfg"] = cfg
     net_params = load_module("upstream_netparams", sim_dir / "netParams.py").netParams
-    if cfg.coreneuron:
-        # These writable GLOBALs become per-instance RANGE variables in the
-        # CoreNEURON-compatible MOD sources. Do not let NetPyNE restore the old
-        # HOC globals imported with the cell rules; INITIAL/rates sets them.
-        for cell_rule in net_params.cellParams.values():
-            rule_globals = cell_rule.get("globals", {})
-            for name in CORENEURON_RANGE_GLOBALS:
-                rule_globals.pop(name, None)
+    # These writable GLOBALs become per-instance RANGE variables in the
+    # CoreNEURON-compatible MOD sources used by both backends. Do not let
+    # NetPyNE restore the old HOC globals imported with the cell rules;
+    # INITIAL/rates sets the per-instance values.
+    for cell_rule in net_params.cellParams.values():
+        rule_globals = cell_rule.get("globals", {})
+        for name in CORENEURON_RANGE_GLOBALS:
+            rule_globals.pop(name, None)
     rank = 0
     nhost = 1
     resource_path = args.output_dir / f"resource_rank{rank}.jsonl"
@@ -221,7 +229,8 @@ def main():
             "backend": args.backend,
             "status": "running",
             "trial": args.trial,
-            "duration_ms": cfg.duration,
+            "duration_ms": args.duration_ms,
+            "input_generation_duration_ms": input_duration_ms,
             "ihGbar": cfg.ihGbar,
             "dynamic_hd_gbar_modification": False,
             "seeds": dict(cfg.seeds),
@@ -238,6 +247,9 @@ def main():
     mark("after_create_pops")
     sim.net.createCells()
     mark("after_create_cells")
+    # VecStim spike trains depend on cfg.duration and are now fully materialized.
+    # Restore the requested integration horizon for short prefix comparisons.
+    cfg.duration = float(args.duration_ms)
 
     local_pt5b = sorted(int(c.gid) for c in sim.net.cells if c.tags.get("pop") == "PT5B")
     gathered_pt5b = sim.pc.py_alltoall([local_pt5b if host == 0 else None for host in range(nhost)])
@@ -356,6 +368,7 @@ def main():
             "condition": "control_quiet", "status": "success", "trial": args.trial,
             "backend": args.backend,
             "duration_ms": cfg.duration, "scale": cfg.scale,
+            "input_generation_duration_ms": input_duration_ms,
             "ihGbar": getattr(cfg, "ihGbar", None),
             "dynamic_hd_gbar_modification": False,
             "build_only": args.build_only, "seeds": dict(cfg.seeds),
