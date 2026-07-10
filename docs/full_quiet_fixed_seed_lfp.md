@@ -18,6 +18,10 @@ To compare conditions, reuse the same three seed arguments. A different
 
 ## LFP recording
 
+This runner uses the project-pinned NEURON 8.2.7. NetPyNE 1.1.1 relies on
+`PtrVector.ptr_update_callback` for LFP current gathering; the runner rejects
+incompatible NEURON builds before allocating the full network.
+
 Three electrodes reproduce the L5 locations used by the upstream analysis:
 
 - `[150, 600, 150]` um: L5A
@@ -30,7 +34,9 @@ disabled. MPI rank-local LFP arrays are summed during gather.
 ## Example command
 
 ```bash
-uv run -- mpiexec --use-hwthread-cpus --bind-to hwthread --mca btl self,vader,tcp -n 16 \
+systemd-run --user --scope -p MemoryHigh=105G -p MemoryMax=115G \
+  env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run -- mpiexec --use-hwthread-cpus --bind-to hwthread --mca btl self,vader,tcp -n 15 \
   python scripts/run_full_quiet_pt5b.py \
   --trial 0 \
   --duration-ms 3000 \
@@ -39,6 +45,10 @@ uv run -- mpiexec --use-hwthread-cpus --bind-to hwthread --mca btl self,vader,tc
   --loc-seed 4321 \
   --output-dir docs-temp/full-model-runs/full-quiet-3s-fixed-seed-lfp-trial0
 ```
+
+On the 16-core Azure VM, 15 MPI ranks leave one hardware thread available for
+SSH and operating-system work. The systemd limits prevent a leaking or
+unexpectedly large run from exhausting the VM memory.
 
 ## Output
 

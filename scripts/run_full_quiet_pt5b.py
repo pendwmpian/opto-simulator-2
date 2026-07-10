@@ -75,6 +75,15 @@ def effective_config(cfg, *, trial, record_pt5b_all, build_only):
     return jsonable(result)
 
 
+def require_lfp_compatible_ptrvector(h) -> None:
+    """Reject NEURON builds whose PtrVector API leaks during NetPyNE LFP runs."""
+    if not hasattr(h.PtrVector(1), "ptr_update_callback"):
+        raise RuntimeError(
+            "LFP recording requires NEURON PtrVector.ptr_update_callback; "
+            "use the project-pinned NEURON 8.2.7 environment"
+        )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--trial", type=int, default=0, help="Metadata only; does not alter seeds")
@@ -124,6 +133,8 @@ def main():
         record_lfp=args.record_lfp and not args.build_only,
     )
     record_lfp = bool(cfg.recordLFP)
+    if record_lfp:
+        require_lfp_compatible_ptrvector(h)
     if args.scale is not None:
         cfg.scale = args.scale
     if args.single_cell_pops:
@@ -184,6 +195,7 @@ def main():
             "nhost": nhost,
             "record_step_ms": cfg.recordStep,
             "lfp_electrodes_um": cfg.recordLFP,
+            "ptr_update_callback_available": hasattr(h.PtrVector(1), "ptr_update_callback"),
             "command": [sys.executable, *sys.argv],
             "effective_config_file": "effective_config.json",
         })
@@ -304,6 +316,7 @@ def main():
             "netpyne_version": netpyne_version, "record_step_ms": cfg.recordStep,
             "command": [sys.executable, *sys.argv],
             "lfp_electrodes_um": cfg.recordLFP,
+            "ptr_update_callback_available": hasattr(h.PtrVector(1), "ptr_update_callback"),
             "effective_config_file": "effective_config.json",
             "output": output_files,
         }

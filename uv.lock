@@ -289,15 +289,6 @@ wheels = [
 ]
 
 [[package]]
-name = "mpmath"
-version = "1.3.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/e0/47/dd32fa426cc72114383ac549964eecb20ecfd886d1e5ccf5340b55b02f57/mpmath-1.3.0.tar.gz", hash = "sha256:7a28eb2a9774d00c7bc92411c19a89209d5da7c4c9a9e227be8330a23a25b91f", size = 508106, upload-time = "2023-03-07T16:47:11.061Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/43/e3/7d92a15f894aa0c9c4b49b8ee9ac9850d6e63b03c9c32c0367a13ae62209/mpmath-1.3.0-py3-none-any.whl", hash = "sha256:a0b2b9fe80bbcd81a6647ff13108738cfb482d481d826cc0e02f5b35e5c88d2c", size = 536198, upload-time = "2023-03-07T16:47:09.197Z" },
-]
-
-[[package]]
 name = "narwhals"
 version = "2.22.1"
 source = { registry = "https://pypi.org/simple" }
@@ -328,20 +319,19 @@ wheels = [
 
 [[package]]
 name = "neuron"
-version = "9.0.1"
+version = "8.2.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "find-libpython" },
     { name = "numpy" },
     { name = "packaging" },
+    { name = "pyreadline3", marker = "sys_platform == 'win32'" },
     { name = "setuptools" },
-    { name = "sympy" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/12/b3/c1511a278e9e046619b1ec201a414f6c5ab24c68d002346783cbb78423b1/neuron-9.0.1-cp313-cp313-macosx_10_15_x86_64.whl", hash = "sha256:650ac07e3653895602a1aa574b743520c56b47f6e901bfc9722556fe41d63262", size = 22026103, upload-time = "2025-11-17T00:20:40.048Z" },
-    { url = "https://files.pythonhosted.org/packages/8b/ee/e56a725c3497a39437fe25999f2739f44b58aac2bef93be2326ba7c3aa3d/neuron-9.0.1-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:9b5f928b035dd2e116c4c5e71761ed2c6d2beb59537d1f0ad9abbe7700cf8fa0", size = 21483220, upload-time = "2025-11-17T00:20:43.181Z" },
-    { url = "https://files.pythonhosted.org/packages/36/1b/75e8172379e2d749bb6d76a74b48ce75cbffef37fa7a75dc82a79b32a00d/neuron-9.0.1-cp313-cp313-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:cc85879c57c500df1b77e720e5aa203cd3baf787b20c1516958cced3cb5ff85b", size = 17405209, upload-time = "2025-11-17T00:20:46.365Z" },
-    { url = "https://files.pythonhosted.org/packages/a0/03/4150a4dfbf943d4cd39763fd5efabec88d6c6684e37bd0be03d0b5053d18/neuron-9.0.1-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:c06f2e2ca4768f19a3e5d71d9b530be2dc31e1af548590465122206c4907a787", size = 18113940, upload-time = "2025-11-17T00:20:49.591Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/d6/27b85c9f11ba46b3cdd8b102ccfa1089c19153e97a8e02b552cb8512b662/neuron-8.2.7-cp313-cp313-macosx_10_15_x86_64.whl", hash = "sha256:28c45074485159218a5741e5b256d2107612de9510546f3f67e9f51e035f9a61", size = 14023563, upload-time = "2025-05-22T23:49:13.312Z" },
+    { url = "https://files.pythonhosted.org/packages/bd/38/c7f40797a813d2a8e1d8e16e4beee3de7879e140bee3d12ef05cc2ece885/neuron-8.2.7-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:346e688acb5fbbc6651cf31ad2c56bb4fb90ece057bfbdfd29a29751c27de98c", size = 13228475, upload-time = "2025-05-22T17:43:24.924Z" },
+    { url = "https://files.pythonhosted.org/packages/48/6c/f0191f7c7f757a0943669cd3793c215ca58133b8c5c722d7670553cd614f/neuron-8.2.7-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:daa7e1b63bf7154b62928dcb141494e311a5607c3394c6aed3b0f94a52d8ad93", size = 14894860, upload-time = "2025-05-22T23:49:17.741Z" },
 ]
 
 [[package]]
@@ -390,7 +380,7 @@ dependencies = [
 requires-dist = [
     { name = "mpi4py", specifier = ">=4.1.2" },
     { name = "netpyne", specifier = ">=1.1.1" },
-    { name = "neuron", specifier = ">=9.0.1" },
+    { name = "neuron", specifier = "==8.2.7" },
     { name = "numpy", specifier = ">=2.4.6" },
     { name = "psutil", specifier = ">=7.2.2" },
     { name = "scipy", specifier = ">=1.17.1" },
@@ -498,6 +488,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pyreadline3"
+version = "3.5.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/0f/49/4cea918a08f02817aabae639e3d0ac046fef9f9180518a3ad394e22da148/pyreadline3-3.5.4.tar.gz", hash = "sha256:8d57d53039a1c75adba8e50dd3d992b28143480816187ea5efbd5c78e6c885b7", size = 99839, upload-time = "2024-09-19T02:40:10.062Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5a/dc/491b7661614ab97483abf2056be1deee4dc2490ecbf7bff9ab5cdbac86e1/pyreadline3-3.5.4-py3-none-any.whl", hash = "sha256:eaf8e6cc3c49bcccf145fc6067ba8643d1df34d604a1ec0eccbf7a18e6d3fae6", size = 83178, upload-time = "2024-09-19T02:40:08.598Z" },
+]
+
+[[package]]
 name = "python-dateutil"
 version = "2.9.0.post0"
 source = { registry = "https://pypi.org/simple" }
@@ -583,18 +582,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
-]
-
-[[package]]
-name = "sympy"
-version = "1.14.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "mpmath" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/83/d3/803453b36afefb7c2bb238361cd4ae6125a569b4db67cd9e79846ba2d68c/sympy-1.14.0.tar.gz", hash = "sha256:d3d3fe8df1e5a0b42f0e7bdf50541697dbe7d23746e894990c030e2b05e72517", size = 7793921, upload-time = "2025-04-27T18:05:01.611Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a2/09/77d55d46fd61b4a135c444fc97158ef34a095e5681d0a6c10b75bf356191/sympy-1.14.0-py3-none-any.whl", hash = "sha256:e091cc3e99d2141a0ba2847328f5479b05d94a6635cb96148ccb3f34671bd8f5", size = 6299353, upload-time = "2025-04-27T18:04:59.103Z" },
 ]
 
 [[package]]
