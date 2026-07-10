@@ -71,6 +71,7 @@ def effective_config(cfg, *, trial, record_pt5b_all, build_only):
         "dynamic_hd_gbar_modification": False,
         "record_pt5b_all": bool(record_pt5b_all),
         "build_only": bool(build_only),
+        "backend": "coreneuron" if bool(getattr(cfg, "coreneuron", False)) else "neuron",
     })
     return jsonable(result)
 
@@ -99,6 +100,7 @@ def main():
     parser.add_argument("--record-pt5b-all", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--record-lfp", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--single-cell-pops", action="store_true")
+    parser.add_argument("--backend", choices=("coreneuron", "neuron"), default="coreneuron")
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
     args.output_dir = args.output_dir.resolve()
@@ -137,6 +139,20 @@ def main():
         require_lfp_compatible_ptrvector(h)
     if args.scale is not None:
         cfg.scale = args.scale
+    cfg.coreneuron = args.backend == "coreneuron"
+    cfg.gpu = False
+    if cfg.coreneuron:
+        from neuron import coreneuron
+
+        # NetPyNE 1.1.1 enables CoreNEURON only after finitialize. Enabling it
+        # before setupRecording is required for Vector.record transfer.
+        coreneuron.enable = True
+        coreneuron.gpu = False
+        if record_lfp:
+            raise RuntimeError(
+                "CoreNEURON cannot execute NetPyNE 1.1.1's per-timestep Python callbacks "
+                "for LFP recording; rerun with --no-record-lfp"
+            )
     if args.single_cell_pops:
         cfg.scale = 1.0
         cfg.singleCellPops = 1
@@ -185,6 +201,7 @@ def main():
         ))
         write_json(args.output_dir / "manifest.json", {
             "condition": "control_quiet",
+            "backend": args.backend,
             "status": "running",
             "trial": args.trial,
             "duration_ms": cfg.duration,
@@ -196,6 +213,7 @@ def main():
             "record_step_ms": cfg.recordStep,
             "lfp_electrodes_um": cfg.recordLFP,
             "ptr_update_callback_available": hasattr(h.PtrVector(1), "ptr_update_callback"),
+            "coreneuron_enabled": bool(cfg.coreneuron),
             "command": [sys.executable, *sys.argv],
             "effective_config_file": "effective_config.json",
         })
@@ -223,7 +241,19 @@ def main():
     sim.net.addStims()
     mark("after_add_stims")
     if not args.build_only:
+        if cfg.coreneuron:
+            # CoreNEURON 8.2 transfers Vector.record data at the integration dt,
+            # but not NetPyNE's Vector.record(ptr, recordStep) form. Ask NetPyNE
+            # to allocate the vectors, then re-register this runner's soma trace
+            # without an explicit interval and downsample after transfer.
+            cfg.recordStep = cfg.dt
         sim.setupRecording()
+        if cfg.coreneuron:
+            for cell in sim.net.cells:
+                key = f"cell_{cell.gid}"
+                if key in sim.simData["V_soma"]:
+                    sim.simData["V_soma"][key].record(cell.secs["soma"]["hObj"](0.5)._ref_v)
+        cfg.recordStep = args.record_step_ms
         mark("after_setup_recording")
         sim.runSim()
         mark("after_run_sim")
@@ -248,6 +278,12 @@ def main():
         }
         trace = all_data.get("V_soma", {})
         voltage = np.asarray(trace.get(f"cell_{target_gid}", []), dtype=np.float32)
+        if cfg.coreneuron:
+            stride = round(args.record_step_ms / cfg.dt)
+            if stride < 1 or not np.isclose(stride * cfg.dt, args.record_step_ms):
+                raise ValueError("CoreNEURON record step must be an integer multiple of dt")
+            expected_samples = round(cfg.duration / args.record_step_ms)
+            voltage = voltage[::stride][:expected_samples]
         pt5b_vm_count = 0
         vm_sample_count = int(voltage.size)
         lfp_sample_count = 0
@@ -266,6 +302,8 @@ def main():
             output_files = ["spikes.npz", "target_vm.npz"]
         if args.record_pt5b_all and not args.build_only:
             pt5b_rows = [np.asarray(trace.get(f"cell_{gid}", []), dtype=np.float32) for gid in all_pt5b_gids]
+            if cfg.coreneuron:
+                pt5b_rows = [row[::stride][:expected_samples] for row in pt5b_rows]
             max_len = max((row.size for row in pt5b_rows), default=0)
             pt5b_vm = np.full((len(pt5b_rows), max_len), np.nan, dtype=np.float32)
             for row_index, row in enumerate(pt5b_rows):
@@ -299,6 +337,7 @@ def main():
         ).strip()
         manifest = {
             "condition": "control_quiet", "status": "success", "trial": args.trial,
+            "backend": args.backend,
             "duration_ms": cfg.duration, "scale": cfg.scale,
             "ihGbar": getattr(cfg, "ihGbar", None),
             "dynamic_hd_gbar_modification": False,
@@ -311,12 +350,14 @@ def main():
             "vm_sample_count": vm_sample_count,
             "lfp_sample_count": lfp_sample_count,
             "elapsed_seconds": time.time() - started,
+            "simulation_seconds": float(sim.timingData.get("runTime", 0.0)),
             "upstream_commit": commit, "python": sys.version,
             "platform": platform.platform(), "neuron_version": neuron.__version__,
             "netpyne_version": netpyne_version, "record_step_ms": cfg.recordStep,
             "command": [sys.executable, *sys.argv],
             "lfp_electrodes_um": cfg.recordLFP,
             "ptr_update_callback_available": hasattr(h.PtrVector(1), "ptr_update_callback"),
+            "coreneuron_enabled": bool(cfg.coreneuron),
             "effective_config_file": "effective_config.json",
             "output": output_files,
         }
