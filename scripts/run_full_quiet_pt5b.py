@@ -22,6 +22,15 @@ UPSTREAM = ROOT / "external" / "M1_NetPyNE_CellReports_2023"
 SIM_DIR = UPSTREAM / "sim"
 DEFAULT_SEEDS = {"conn": 4321, "stim": 1234, "loc": 4321}
 LFP_LABELS = ["L5A_600um", "upper_L5B_800um", "lower_L5B_1000um"]
+CORENEURON_RANGE_GLOBALS = {
+    "tadj_Nca",
+    "hinf_cancr", "minf_cancr", "s_inf_cancr",
+    "hinf_catcb", "minf_catcb",
+    "minf_ch_CavL", "mtau_ch_CavL",
+    "ninf_ch_KvAngf", "linf_ch_KvAngf", "taul_ch_KvAngf", "taun_ch_KvAngf",
+    "oinf_ch_KvCaB", "otau_ch_KvCaB",
+    "minf_naz", "hinf_naz", "mtau_naz", "htau_naz", "tadj_naz",
+}
 
 
 def load_module(name, path):
@@ -161,6 +170,14 @@ def main():
     # The upstream netParams module imports cfg from __main__.
     globals()["cfg"] = cfg
     net_params = load_module("upstream_netparams", sim_dir / "netParams.py").netParams
+    if cfg.coreneuron:
+        # These writable GLOBALs become per-instance RANGE variables in the
+        # CoreNEURON-compatible MOD sources. Do not let NetPyNE restore the old
+        # HOC globals imported with the cell rules; INITIAL/rates sets them.
+        for cell_rule in net_params.cellParams.values():
+            rule_globals = cell_rule.get("globals", {})
+            for name in CORENEURON_RANGE_GLOBALS:
+                rule_globals.pop(name, None)
     rank = 0
     nhost = 1
     resource_path = args.output_dir / f"resource_rank{rank}.jsonl"
