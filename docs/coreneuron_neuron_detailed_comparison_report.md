@@ -254,6 +254,24 @@ patch を `scripts/build_coreneuron_mechanisms.py` に追加した。
 なかったことを示す。未修正時の 586 対 16,270 発という差は、抑制性細胞が NaN に
 なって事実上抑制を失った結果として説明できる。
 
+### 全 MOD の top-level `LOCAL` 監査
+
+3 s再実行前に、ビルド対象の全 MOD について brace scope を区別し、PROCEDURE/FUNCTION
+内の一時 `LOCAL` を除外して監査した。top-level `LOCAL` は8件だった。
+
+| MOD | 変数 | 判定 |
+|---|---|---|
+| `kapcb`, `kapin` | `qt` | `INITIAL` 代入後、別ブロックの速度論で参照。修正対象 |
+| `ch_Kdrfastngf` | `q10` | `rates` 内で代入後、同じ呼出し内だけで使用 |
+| `ch_CavN` | `q10` | `trates -> rates` で毎回代入後、同じ `trates` 内で使用 |
+| `ch_KCaS` | `q10` | `rate` 内で代入後、同じ procedure 内だけで使用 |
+| `ch_Navngf` | `q10` | `trates -> rates` で毎回代入後、同じ `trates` 内で使用 |
+| `km`, `kca` | `nexp` | 実行文では未使用。参照箇所はコメントのみ |
+
+したがって、`INITIAL` で初期化した top-level `LOCAL` を後の `BREAKPOINT`、
+`DERIVATIVE`、`KINETIC`、`NET_RECEIVE` から永続値として読む危険パターンは、修正済み
+の `kapcb.qt` と `kapin.qt` 以外には存在しなかった。
+
 ## 8. 原因特定前に疑われた箇所
 
 ### 強く疑われる
