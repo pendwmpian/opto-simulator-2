@@ -216,7 +216,45 @@ Kumbhar et al. は適合モデルで NEURON との binary result compatibility �
 いる。このモデルで観測された 586 対 16,270 という差は、通常期待される
 CoreNEURON の数値差ではない。
 
-## 7. 現時点で疑われる箇所
+## 7. 非 PT 細胞の診断と原因特定
+
+PT5B だけを観測していた制約を解消するため、最初に発火する SOM 細胞6個、IT5A
+細胞1個、および別層の SOM 細胞1個について、soma と実際の spike source segment の
+Vm を 0.025 ms 間隔で記録した。最初の未修正 CoreNEURON 実行では、IT5A の GID
+3036 は NEURON と同じ 44.975 ms に発火した一方、すべての SOM 細胞は 0.05 ms から
+Vm が NaN になった。したがって、最初の原因は NetCon threshold や spike-source
+mapping ではなく、抑制性 `HH_simple` 細胞の膜機構であった。
+
+1 rank・各 population 1細胞・0.2 ms の縮小試験でも、全 SOM/PV 細胞が同じ 0.05 ms
+から NaN になった。これにより MPI spike exchange は除外できる。機構をすべて外した
+passive-only 条件から一種類ずつ戻す二分探索では、次の二機構だけが NaN を再現した。
+
+| 細胞型 | 原因機構 | 単独 add-back の結果 |
+|---|---|---|
+| SOM | `kapcb` | 0.05 ms から NaN |
+| PV | `kapin` | 0.05 ms から NaN |
+
+両 MOD は温度補正係数 `qt` を top-level `LOCAL` として宣言し、`INITIAL` で一度だけ
+代入していた。生成された通常 NEURON コードでは `qt` は mechanism/thread 共有領域
+`_thread[0]` に置かれる。CoreNEURON へのモデル転送後、この値がゼロのままになると、
+`taun = ... / (qt * ...)` が非有限値となり、次の固定刻み更新で Vm が NaN になる。
+`qt` を `ASSIGNED` かつ `RANGE` として各 mechanism instance に保持させる compatibility
+patch を `scripts/build_coreneuron_mechanisms.py` に追加した。
+
+修正後の検証結果:
+
+| 試験 | 結果 |
+|---|---|
+| 1 rank、SOM/PV、0.2 ms | 全 Vm 有限、NEURON と全保存値一致、最大絶対差 0 |
+| 16 rank、全ネットワーク、55 ms | 診断8細胞の soma/source Vm が全保存値一致 |
+| 同55 msの全スパイク列 | 300件すべて時刻・GIDとも完全一致 |
+
+この結果は、提示された「最初の非 PT 細胞を直接追跡する」という仮説が正しく、
+局所シナプス target mapping や NetCon event delivery は少なくとも最初の差の原因では
+なかったことを示す。未修正時の 586 対 16,270 発という差は、抑制性細胞が NaN に
+なって事実上抑制を失った結果として説明できる。
+
+## 8. 原因特定前に疑われた箇所
 
 ### 強く疑われる
 
@@ -242,7 +280,7 @@ CoreNEURON の数値差ではない。
 接続数は一致するが、完全な接続辺リストは保存していないため、転送後 NetCon の
 全フィールドがバイト単位で同一かは未確認である。
 
-## 8. 速度比較
+## 9. 速度比較
 
 ### 3 s全実行
 
@@ -266,20 +304,27 @@ CoreNEURON の数値差ではない。
 利点は確認できる。ただし発火・再帰イベントがないため、発火ありネットワークの
 正しい性能値ではない。
 
-## 9. 推奨する次の診断
+### 修正後、結果が完全一致した発火あり55 ms条件
 
-1. 35--55 ms に限定し、最初に発火する全細胞の soma Vm、閾値、主要イオン電流、
-   synaptic conductance を両backendで記録する
-2. 最初に不一致となるGIDのcell type/populationを特定する
-3. cell typeまたは機構を段階的に無効化し、CoreNEURON差が消える最小構成を探す
-4. NetConのpreGid、postGid、weight、delay、target mechanismを転送前後でhash比較する
-5. NEURON/CoreNEURON 9系のsource buildで同じmatched-prefix試験を実行する
-6. 最小再現モデルが得られたら、NEURON公式issueへ報告する
+| 指標 | NEURON | CoreNEURON | speedup |
+|---|---:|---:|---:|
+| simulation時間 | 908.62 s | 302.17 s | 3.01x |
+| 総時間 | 1,123.53 s | 517.95 s | 2.17x |
+| 全スパイク | 300 | 300 | 完全一致 |
 
-修正が確認されるまでは、発火あり本番計算には通常NEURONを使用し、CoreNEURONは
-診断・性能試験用に限定する。
+これは発火と再帰イベントを含み、かつ出力が完全一致した最初の有効な速度比較である。
 
-## 10. 関連実装・成果物
+## 10. 推奨する次の検証
+
+1. 修正済み mechanisms で 100 ms matched-prefix を再実行し、全 PT5B Vm も確認する
+2. 修正済み CoreNEURON で3 s本番条件を再実行し、June NEURON基準と比較する
+3. `kapcb`/`kapin` の最小再現モデルを作成し、NEURON公式issueへ報告する
+4. NEURON/CoreNEURON 9系でも top-level `LOCAL` の転送挙動を確認する
+
+55 msまでは修正の有効性を確認したが、3 s全体の一致はまだ未検証である。本番結果へ
+切り替える前に、修正済み3 s run の完全比較が必要である。
+
+## 11. 関連実装・成果物
 
 - CoreNEURON MOD build: `scripts/build_coreneuron_mechanisms.py`
 - full network runner: `scripts/run_full_quiet_pt5b.py`

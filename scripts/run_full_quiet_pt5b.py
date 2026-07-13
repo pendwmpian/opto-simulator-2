@@ -108,6 +108,19 @@ def main():
     parser.add_argument("--stim-seed", type=int, default=DEFAULT_SEEDS["stim"])
     parser.add_argument("--loc-seed", type=int, default=DEFAULT_SEEDS["loc"])
     parser.add_argument("--target-gid", type=int, help="Defaults to the lowest PT5B GID")
+    parser.add_argument(
+        "--diagnostic-gids",
+        type=int,
+        nargs="+",
+        default=[],
+        help="Record soma and actual spike-source voltage plus cell metadata for these GIDs",
+    )
+    parser.add_argument(
+        "--disable-hh-simple-mechanisms",
+        nargs="+",
+        default=[],
+        help="Diagnostic only: remove these mechanisms from HH_simple cell rules",
+    )
     parser.add_argument("--upstream-dir", type=Path, default=UPSTREAM)
     parser.add_argument("--scale", type=float)
     parser.add_argument("--build-only", action="store_true")
@@ -186,6 +199,13 @@ def main():
         rule_globals = cell_rule.get("globals", {})
         for name in CORENEURON_RANGE_GLOBALS:
             rule_globals.pop(name, None)
+        cell_models = cell_rule.get("conds", {}).get("cellModel", [])
+        if isinstance(cell_models, str):
+            cell_models = [cell_models]
+        if "HH_simple" in cell_models:
+            for sec in cell_rule.get("secs", {}).values():
+                for mechanism in args.disable_hh_simple_mechanisms:
+                    sec.get("mechs", {}).pop(mechanism, None)
     rank = 0
     nhost = 1
     resource_path = args.output_dir / f"resource_rank{rank}.jsonl"
@@ -251,6 +271,67 @@ def main():
     # Restore the requested integration horizon for short prefix comparisons.
     cfg.duration = float(args.duration_ms)
 
+    diagnostic_gids = sorted(set(args.diagnostic_gids))
+    local_diagnostic_cells = {}
+    for cell in sim.net.cells:
+        if cell.gid not in diagnostic_gids or not getattr(cell, "secs", None):
+            continue
+        source_name = None
+        source_sec = None
+        source_loc = 0.5
+        for sec_name, sec in cell.secs.items():
+            if "spikeGenLoc" in sec:
+                source_name, source_sec = sec_name, sec
+                source_loc = float(sec["spikeGenLoc"])
+                break
+        if source_sec is None:
+            for sec_name, sec in cell.secs.items():
+                if len(sec.get("topol", {})) == 0:
+                    source_name, source_sec = sec_name, sec
+                    break
+        if source_sec is None:
+            source_name, source_sec = next(iter(cell.secs.items()))
+        soma_name = "soma" if "soma" in cell.secs else source_name
+        threshold = float(source_sec.get("threshold", net_params.defaultThreshold))
+        local_diagnostic_cells[int(cell.gid)] = {
+            "gid": int(cell.gid),
+            "rank": rank,
+            "pop": cell.tags.get("pop"),
+            "cell_type": cell.tags.get("cellType"),
+            "cell_model": cell.tags.get("cellModel"),
+            "soma_sec": soma_name,
+            "source_sec": source_name,
+            "source_loc": source_loc,
+            "threshold_mV": threshold,
+            "cell": cell,
+            "source_sec_obj": source_sec,
+        }
+
+    gathered_diagnostic_meta = sim.pc.py_alltoall(
+        [
+            {
+                gid: {key: value for key, value in meta.items() if key not in ("cell", "source_sec_obj")}
+                for gid, meta in local_diagnostic_cells.items()
+            }
+            if host == 0
+            else None
+            for host in range(nhost)
+        ]
+    )
+    if rank == 0:
+        diagnostic_meta = {
+            int(gid): meta
+            for group in gathered_diagnostic_meta
+            if group
+            for gid, meta in group.items()
+        }
+        missing_diagnostic_gids = sorted(set(diagnostic_gids) - set(diagnostic_meta))
+        if missing_diagnostic_gids:
+            raise ValueError(f"Diagnostic GIDs not found: {missing_diagnostic_gids}")
+    else:
+        diagnostic_meta = {}
+    diagnostic_meta = sim.pc.py_broadcast(diagnostic_meta, 0)
+
     local_pt5b = sorted(int(c.gid) for c in sim.net.cells if c.tags.get("pop") == "PT5B")
     gathered_pt5b = sim.pc.py_alltoall([local_pt5b if host == 0 else None for host in range(nhost)])
     if rank == 0:
@@ -269,6 +350,8 @@ def main():
     mark("after_connect_cells")
     sim.net.addStims()
     mark("after_add_stims")
+    diagnostic_vectors = {}
+    gathered_diagnostic_traces = []
     if not args.build_only:
         if cfg.coreneuron:
             # CoreNEURON 8.2 transfers Vector.record data at the integration dt,
@@ -282,10 +365,26 @@ def main():
                 key = f"cell_{cell.gid}"
                 if key in sim.simData["V_soma"]:
                     sim.simData["V_soma"][key].record(cell.secs["soma"]["hObj"](0.5)._ref_v)
+        for gid, meta in local_diagnostic_cells.items():
+            soma_vector = h.Vector()
+            source_vector = h.Vector()
+            soma_vector.record(meta["cell"].secs[meta["soma_sec"]]["hObj"](0.5)._ref_v)
+            source_vector.record(meta["source_sec_obj"]["hObj"](meta["source_loc"])._ref_v)
+            diagnostic_vectors[gid] = (soma_vector, source_vector)
         cfg.recordStep = args.record_step_ms
         mark("after_setup_recording")
         sim.runSim()
         mark("after_run_sim")
+        local_diagnostic_traces = {
+            gid: {
+                "soma_v_mV": list(soma_vector),
+                "source_v_mV": list(source_vector),
+            }
+            for gid, (soma_vector, source_vector) in diagnostic_vectors.items()
+        }
+        gathered_diagnostic_traces = sim.pc.py_alltoall(
+            [local_diagnostic_traces if host == 0 else None for host in range(nhost)]
+        )
         include_entries = ["spkt", "spkid", "V_soma"]
         if record_lfp:
             include_entries.append("LFP")
@@ -329,6 +428,43 @@ def main():
                 **seed_fields,
             )
             output_files = ["spikes.npz", "target_vm.npz"]
+        if diagnostic_gids and not args.build_only:
+            diagnostic_trace_by_gid = {
+                int(gid): trace_data
+                for group in gathered_diagnostic_traces
+                if group
+                for gid, trace_data in group.items()
+            }
+            stride = round(args.record_step_ms / cfg.dt)
+            expected_samples = round(cfg.duration / args.record_step_ms)
+            soma_rows = []
+            source_rows = []
+            for gid in diagnostic_gids:
+                trace_data = diagnostic_trace_by_gid[gid]
+                soma_rows.append(np.asarray(trace_data["soma_v_mV"], dtype=np.float32)[::stride][:expected_samples])
+                source_rows.append(np.asarray(trace_data["source_v_mV"], dtype=np.float32)[::stride][:expected_samples])
+            diagnostic_samples = min(
+                [row.size for row in soma_rows + source_rows], default=0
+            )
+            soma_vm = np.stack([row[:diagnostic_samples] for row in soma_rows])
+            source_vm = np.stack([row[:diagnostic_samples] for row in source_rows])
+            np.savez_compressed(
+                args.output_dir / "diagnostic_vm.npz",
+                t_ms=np.arange(diagnostic_samples, dtype=np.float64) * cfg.recordStep,
+                gids=np.asarray(diagnostic_gids, dtype=np.int64),
+                soma_v_mV=soma_vm,
+                source_v_mV=source_vm,
+                ranks=np.asarray([diagnostic_meta[gid]["rank"] for gid in diagnostic_gids], dtype=np.int64),
+                pops=np.asarray([diagnostic_meta[gid]["pop"] for gid in diagnostic_gids]),
+                cell_types=np.asarray([diagnostic_meta[gid]["cell_type"] for gid in diagnostic_gids]),
+                cell_models=np.asarray([diagnostic_meta[gid]["cell_model"] for gid in diagnostic_gids]),
+                soma_secs=np.asarray([diagnostic_meta[gid]["soma_sec"] for gid in diagnostic_gids]),
+                source_secs=np.asarray([diagnostic_meta[gid]["source_sec"] for gid in diagnostic_gids]),
+                source_locs=np.asarray([diagnostic_meta[gid]["source_loc"] for gid in diagnostic_gids]),
+                thresholds_mV=np.asarray([diagnostic_meta[gid]["threshold_mV"] for gid in diagnostic_gids]),
+                **seed_fields,
+            )
+            output_files.append("diagnostic_vm.npz")
         if args.record_pt5b_all and not args.build_only:
             pt5b_rows = [np.asarray(trace.get(f"cell_{gid}", []), dtype=np.float32) for gid in all_pt5b_gids]
             if cfg.coreneuron:
@@ -375,6 +511,8 @@ def main():
             "seed_policy": "fixed_explicit; trial does not modify seeds",
             "target_gid": target_gid, "pt5b_gid_count": len(all_pt5b_gids),
             "record_pt5b_all": args.record_pt5b_all, "nhost": nhost,
+            "diagnostic_gids": diagnostic_gids,
+            "disabled_hh_simple_mechanisms": sorted(set(args.disable_hh_simple_mechanisms)),
             "all_spike_count": int(spkt.size),
             "recorded_pt5b_vm_count": pt5b_vm_count,
             "vm_sample_count": vm_sample_count,

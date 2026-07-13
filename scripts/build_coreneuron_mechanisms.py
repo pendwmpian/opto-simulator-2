@@ -23,6 +23,16 @@ REPLACEMENTS = {
     ],
     "cancr.mod": [("GLOBAL hinf, minf, s_inf", "RANGE hinf, minf, s_inf")],
     "catcb.mod": [("GLOBAL hinf, minf", "RANGE hinf, minf")],
+    "kapcb.mod": [
+        ("RANGE gkabar, ik", "RANGE gkabar, ik, qt"),
+        ("        taun            (ms)", "        taun            (ms)\n        qt              (1)"),
+        ("LOCAL qt", ""),
+    ],
+    "kapin.mod": [
+        ("RANGE gkabar, ik", "RANGE gkabar, ik, qt"),
+        ("        taun            (ms)", "        taun            (ms)\n        qt              (1)"),
+        ("LOCAL qt", ""),
+    ],
     "ch_CavL.mod": [("GLOBAL minf,mtau", "RANGE minf,mtau")],
     "ch_KvAngf.mod": [("GLOBAL ninf, linf, taul, taun", "RANGE ninf, linf, taul, taun")],
     "ch_KvCaB.mod": [("GLOBAL oinf, otau", "RANGE oinf, otau")],
