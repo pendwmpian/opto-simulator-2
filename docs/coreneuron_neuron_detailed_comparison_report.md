@@ -311,6 +311,27 @@ patch を `scripts/build_coreneuron_mechanisms.py` に追加した。
 見かけ上は総時間が約6.6%短いが、CoreNEURON側は90,792発多くスパイクを生成して
 おり、同じ計算結果ではない。この値を純粋なbackend speedupとして扱うべきではない。
 
+### `qt` 修正後の3 s全実行
+
+全 MOD の top-level `LOCAL` 監査後、修正済み `kapcb`/`kapin` を用いて同じ16 MPI
+rank、seed、入力、`ihGbar=0.75`、LFPなし、全 PT5B Vm記録条件を再実行した。
+
+| 指標 | June NEURON基準 | 修正後 CoreNEURON | 比較 |
+|---|---:|---:|---:|
+| 総時間 | 20,718.17 s | 17,883.42 s | 1.16x、13.7%短縮 |
+| simulation時間 | 約20,480 s | 17,646.70 s | 約1.16x |
+| 全スパイク | 135,093 | 135,093 | 全時刻・GID完全一致 |
+| 全 PT5B Vm | 1,435 x 30,000点 | 1,435 x 30,000点 | 全値完全一致、最大差0 |
+| sampled total RSS最大 | 80.61 GiB | 74.28 GiB | 6.33 GiB、7.9%削減 |
+
+CoreNEURON jobの開始から終了までは 2026-07-13 04:15:04--09:13:12 UTC、4時間
+58分8秒だった。manifest内の総時間は4時間58分3秒である。修正前 CoreNEURON の
+sampled RSS最大74.28 GiBと修正後74.28 GiBは実質同じであり、`qt` を2機構の
+per-instance RANGEへ変更したメモリ増加は観測上無視できる。
+
+この完全一致により、修正後 CoreNEURON は3 s本番条件でも数値的に妥当であることを
+確認した。修正前の速度比較は無効だが、この表は同一結果に対する有効な比較である。
+
 ### 結果が完全一致した発火なし100 ms条件
 
 | 指標 | NEURON | CoreNEURON | speedup |
